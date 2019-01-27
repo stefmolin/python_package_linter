@@ -1,0 +1,75 @@
+#!/bin/bash
+
+# paths
+PYLINT_ANALYSIS_DIR=./pylint_analysis
+PYLINT_RESULTS_FILE=${PYLINT_ANALYSIS_DIR}/results
+PYLINT_REPORTS_FILE=${PYLINT_ANALYSIS_DIR}/report
+PYLINT_DEPENDENCY_GRAPHS_DIR=${PYLINT_ANALYSIS_DIR}/dependency_graphs
+PYLINT_MODULE_REPORTS_DIR=${PYLINT_ANALYSIS_DIR}/results_by_module
+
+# configuration
+PYLINT_CONFIG=.pylintrc
+PACKAGE_TO_LINT=<package_name_here>
+GRAPH_FILE_PATTERN=*dependencies_graph.png
+
+# create directories if they don't exist
+for dir in ${PYLINT_ANALYSIS_DIR} ${PYLINT_DEPENDENCY_GRAPHS_DIR} ${PYLINT_MODULE_REPORTS_DIR}; do
+  if [ ! -d "$dir" ]; then
+    mkdir -p "$dir";
+  fi
+done
+
+# status update
+echo "Getting pylint results for $PACKAGE_TO_LINT..."
+
+# run pylint with reports
+pylint -ry --rcfile=${PYLINT_CONFIG} ${PACKAGE_TO_LINT} > ${PYLINT_RESULTS_FILE}
+
+# status update
+echo "Cleaning up results and reports..."
+
+# split the reports from the log of the findings (order matters)
+sed -ne '/Report/,$p' "$PYLINT_RESULTS_FILE" > "$PYLINT_REPORTS_FILE"
+sed -i '/Report/Q' "$PYLINT_RESULTS_FILE"
+
+# separate the results into separate files per module
+csplit -s "$PYLINT_RESULTS_FILE" '%*%' '/\*\*\*\*\*\*\*\*\*\*\*\*\*/' '{*}'
+
+# name files according to their module and properly nest the directories
+for file in $(ls | grep xx); do
+  # grab the module the results are for
+  module=$(cut -f3 -d" " $file | head -n 1 | sed "s/$PACKAGE_TO_LINT\.*//" | sed 's/\./\//g');
+
+  # figure out the directories we need to check for existence and possibly create
+  directory_count=$(awk -F'/' '{print NF-1}' <<< $module)
+  if (( $directory_count > 0 )); then
+    # create all necessary directories if they don't exist already
+    dir="$PYLINT_MODULE_REPORTS_DIR"/$(echo $module | cut -d'/' -f1-$directory_count);
+    if [ ! -d "$dir" ]; then
+      mkdir -p "$dir";
+    fi
+  fi
+
+  # rename the file
+  mv $file "$PYLINT_MODULE_REPORTS_DIR/$module"
+done
+
+# delete the full results file
+rm "$PYLINT_RESULTS_FILE"
+
+# move the dependency graphs into the results folder if they exist
+if [[ $( ls | grep $(sed "s/\*//" <<< ${GRAPH_FILE_PATTERN}) ) ]]; then
+  mv ${GRAPH_FILE_PATTERN} "$PYLINT_DEPENDENCY_GRAPHS_DIR"
+fi
+
+# status update
+for text in \
+  "Done!"\
+  "________________________________________________________________________"\
+  "| Outputs:              $PYLINT_ANALYSIS_DIR"\
+  "| Reports:              $PYLINT_REPORTS_FILE"\
+  "| Dependency graphs:    $PYLINT_DEPENDENCY_GRAPHS_DIR"\
+  "| Modules with results: $PYLINT_MODULE_REPORTS_DIR"\
+  "________________________________________________________________________"; do
+    echo "$text";
+done
